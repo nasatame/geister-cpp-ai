@@ -16,7 +16,7 @@
 
 ## Usage
 1. [geister-cpp-lib](https://github.com/ats-ito/Geister-cpp-lib)に従い環境を準備してください。
-2. "/Geister-cpp-lib/src"にこのレポジトリの"??/src"をコピーする。
+2. "/Geister-cpp-lib/Player"にこのレポジトリの"src/??"をコピーする。(??は任意の名前)
 3. 1.の手順に従いプログラムをコンパイルする。
 
 ### GUI
