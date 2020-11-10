@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <limits>
 #include <cassert>
+#include <fstream>
 
 #include "random.hpp"
 #include "player.hpp"
@@ -13,11 +14,13 @@
 #include "geister.hpp"
 #include "simulator.hpp"
 
-constexpr int PLAYOUT_COUNT = 200000;
+#include "aiueo.hpp"
+
+constexpr int PLAYOUT_COUNT = 100000;
 constexpr int MAX_NODE = 10000;
-constexpr int N_THR = 200;
+constexpr int N_THR = 1000;
 constexpr double alpha = 0.114142356;
-constexpr bool DISPLAY_ON = false;
+constexpr bool DISPLAY_ON = true;
 
 //maxを選ぶノードをmaxノードと呼称する。
 //一番最初はmaxノードである。
@@ -79,6 +82,9 @@ struct MonteCarloNode
 
     //後攻の時は、後攻が有利な手を選びたい。reward_sumが負のノードをなるべく選ぶようにするために、符号を反転して返す。
     double get_ucb1_2nd(const MonteCarloTree &tree) const;
+
+    //ボード情報の出力
+    std::string printBoard() const;
 };
 
 class MonteCarloTree
@@ -92,7 +98,7 @@ public:
     static constexpr int max_node = MAX_NODE;
     static constexpr int Nthr = N_THR;
     //ルートノードは0
-    std::vector<MonteCarloNode> nodes;
+    static std::vector<MonteCarloNode> nodes;
     int nodes_count;
 
     //現在の盤面情報を渡されて初期化する。
@@ -100,7 +106,13 @@ public:
     MonteCarloTree()
         : mt(std::mt19937(rd()))
     {
-        nodes = std::vector<MonteCarloNode>(max_node);
+        //並列化の際には注意
+        static bool init_flag = false;
+
+        nodes.clear();
+        nodes.resize(max_node);
+
+        dummy();
     }
 
     void setPurpleColor(Geister &game) const;
@@ -208,10 +220,12 @@ public:
 
         for (int i = 0; i < legalMoves.size(); i++)
         {
-            if (max_node <= nodes_count - 5)
+            if (nodes.size() - 5 <= nodes_count)
             {
-                std::cerr << "errro array is not enough." << std::endl;
-                std::exit(-1);
+                //現状だと落ちてしまうので改善、
+                nodes.resize(nodes.size() * 2);
+                //std::cerr << "error array is not enough." << std::endl;
+                //std::exit(-1);
             }
 
             //ターンプレイヤーの設定
@@ -497,7 +511,69 @@ public:
         }
     }
 
-    void disp(int node_num)
+    void displayDOTLaunguage(int node_num, std::ofstream& ofs)
+    {
+
+        double eval = -1;
+        //現在の手番が先攻なら、後攻がどのくらい有利であるか
+        if (nodes.at(node_num).turn_player == -1)
+        {
+            eval = nodes.at(node_num).get_ucb1_1st(*this);
+        }
+        else
+        {
+            eval = nodes.at(node_num).get_ucb1_2nd(*this);
+        }
+        //n002 [label="+"] ;
+        //std::cerr << std::format("n{0:03} [label=\"{1:.3}\"] ;",node_num+2,eval) << std::endl;
+        std::string board = nodes.at(node_num).printBoard();
+        ofs << "n" << std::setfill('0') << std::setw(3) << node_num+2 << " [shape=box , fontname=\"monospace\" , label=\"" << std::setprecision(3) << eval << "\\n" << board <<  "\"] ;"  << std::endl;
+
+        for (int i = 0; i < nodes.at(node_num).children.size(); i++)
+        {
+            //std::cerr << node_num << " " << nodes.at(node_num).children[i] << " ";
+            //n002 -- n003 ;
+            //std::cerr << std::format("n{0:03} -- n{1:03} ;",node_num+2,nodes.at(node_num).children[i]+2) << std::endl;
+            ofs << "n" <<  std::setfill('0') << std::setw(3) << node_num+2 << " -- n" <<  std::setfill('0') << std::setw(3) << nodes.at(node_num).children[i]+2 << " ;" << std::endl;
+
+            int child_num = nodes.at(node_num).children[i];
+            if (nodes.at(node_num).turn_player == 1)
+            {
+                //std::cerr << std::setprecision(3) << nodes.at(child_num).get_ucb1_1st(*this) << std::endl;
+                //std::cerr << nodes.at(child_num).playout << std::endl;
+            }
+            else
+            {
+                //std::cerr << std::setprecision(3) << nodes.at(child_num).get_ucb1_2nd(*this) << std::endl;
+                //std::cerr << nodes.at(child_num).playout << std::endl;
+            }
+
+            displayDOTLaunguage(child_num,std::ref(ofs));
+        }
+    }
+
+    void displayDOTLaunguage()
+    {
+        if (DISPLAY_ON)
+        {
+            std::ofstream ofs("thisfile");
+
+            ofs << "graph \"\" " << std::endl;
+            ofs << "{" << std::endl;
+            ofs << "label=\"game tree graph\" " << std::endl;
+            ofs << "subgraph gametree " << std::endl;
+            ofs << "{" << std::endl;
+            ofs << "label=\"game tree graph\" " << std::endl;
+
+            ofs << "n002 ; " << std::endl;
+            displayDOTLaunguage(0,std::ref(ofs));
+
+            ofs << "}" << std::endl;
+            ofs << "}" << std::endl;
+        }
+    }
+
+    void display(int node_num)
     {
 
         for (int i = 0; i < nodes.at(node_num).children.size(); i++)
@@ -516,7 +592,7 @@ public:
                 //std::cerr << nodes.at(child_num).playout << std::endl;
             }
 
-            disp(child_num);
+            display(child_num);
         }
     }
 
@@ -530,10 +606,12 @@ public:
 
             std::cerr << nodes_count << " " << nodes_count - 1 << std::endl;
 
-            disp(0);
+            display(0);
         }
     }
 };
+
+std::vector<MonteCarloNode> MonteCarloTree::nodes;
 
 class MonteCarloPlayer : public Player
 {
@@ -569,7 +647,7 @@ public:
         }
         //std::cerr << "MonteCarlo : play end " << i << std::endl;
 
-        tree.display();
+        tree.displayDOTLaunguage();
         //std::cerr << "MonteCarlo val : " << tree.nodes.at(tree.select(0)).get_ucb1_1st(tree) << std::endl;
         return tree.nodes.at(tree.select(0)).leagalMove;
     }
@@ -620,6 +698,84 @@ double MonteCarloNode::get_ucb1_2nd(const MonteCarloTree &tree) const
         return std::numeric_limits<double>::infinity();
     }
     return (-1 * reward_sum) / (playout * 2) + 0.5 + alpha * std::sqrt(std::log(t) / playout);
+}
+
+std::string MonteCarloNode::printBoard() const {
+
+    const std::array<Unit, 16>& units =  this->game.allUnit();
+    std::string info = "";
+    info +=  "2ndPlayer Take: ";
+    for(int i = 0; i < 8; ++i){
+        const Unit& u = units[i];
+        if(u.isTaken()){
+            /*
+            if(u.isBlue() && u.isRed())
+                info +=  "\\e[35m";
+            else if(u.isBlue())
+                info +=  "\\e[34m";
+            else if(u.isRed())
+                info +=  "\\e[31m";
+            */
+            info +=  u.name();
+            //info +=  "\\e[0m";
+            info += ",";
+        }
+    }
+    info +=  "\\l";
+    info +=  std::string("  0 1 2 3 4 5") + "\\l";
+    for(int i = 0; i < 6; ++i){
+        info +=  std::to_string(i);
+        for(int j = 0; j < 6; ++j){
+            info +=  " ";
+            bool exist = false;
+            for(const Unit& u: units){
+                if(u.x() == j && u.y() == i){
+                    /*
+                    if(u.isBlue() && u.isRed())
+                        info +=  "\\e[35m";
+                    else if(u.isBlue())
+                        info +=  "\\e[34m";
+                    else if(u.isRed())
+                        info +=  "\\e[31m";
+                    */
+                    info +=  u.name();
+                    //info +=  "\\e[0m";
+                    exist = true;
+                    break;
+                }
+            }
+            if(!exist) info +=  " ";
+        }
+        info +=  "\\l";
+    }
+    info +=  "1stPlayer Take: ";
+    for(int i = 8; i < 16; ++i){
+        const Unit& u = units[i];
+        if(u.isTaken()){
+            /*
+            if(u.isBlue() && u.isRed())
+                info +=  "\\e[35m";
+            else if(u.isBlue())
+                info +=  "\\e[34m";
+            else if(u.isRed())
+                info +=  "\\e[31m";
+            */
+            info +=  u.name();
+            //info +=  std::string("\\e[0m") + ",";
+            info += ",";
+        }
+    }
+    info +=  "\\l";
+    for(int i = 0; i < 16; ++i){
+        const Unit& u = units[i];
+        if(u.isEscape()){
+            //info +=  std::string("Escape: ") + "\\e[34m" + u.name() + "\\e[0m" + "\\l";
+            info +=  std::string("Escape: ") + u.name() + "\\l";
+        }
+    }
+    info +=  "\\l";
+
+    return info;
 }
 
 void MonteCarloTree::decisiveColor(Geister &game) const
